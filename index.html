@@ -95,7 +95,7 @@
 
         <div class="status-bar" id="status-text">等待连接...</div>
 
-        <div class="camera-box" onclick="initHandPose()">
+        <div class="camera-box" 
             <video id="input-video" playsinline muted autoplay></video>
         </div>
     </div>
@@ -509,7 +509,7 @@
         // ==========================================
         // 6. 手势识别 (TensorFlow.js)
         // ==========================================
-        async function initHandPose() {
+        /*async function initHandPose() {
             if (typeof handPoseDetection === 'undefined') {
                  document.getElementById('status-text').innerText = "⚠️ AI库未加载";
                  return;
@@ -530,7 +530,7 @@
             } catch(e) {
                 document.getElementById('status-text').innerText = "⚠️ 无法访问摄像头";
             }
-        }
+        }*/
 
         function checkHands() {
             if(!handDetector) return;
@@ -561,6 +561,7 @@
     </script>
 </body>
 </html>
+
 
 
 
