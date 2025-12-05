@@ -5,277 +5,313 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>云端魔法圣诞树 (ac圣诞快乐)</title>
     
-    <!-- 1. 更换为阿里/七牛云 Staticfile CDN (国内最稳) -->
-    <script src="https://cdn.staticfile.org/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.staticfile.org/three.js/r128/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://cdn.staticfile.org/three.js/r128/examples/js/postprocessing/EffectComposer.js"></script>
-    <script src="https://cdn.staticfile.org/three.js/r128/examples/js/postprocessing/RenderPass.js"></script>
-    <script src="https://cdn.staticfile.org/three.js/r128/examples/js/postprocessing/ShaderPass.js"></script>
-    <script src="https://cdn.staticfile.org/three.js/r128/examples/js/shaders/CopyShader.js"></script>
-    <script src="https://cdn.staticfile.org/three.js/r128/examples/js/shaders/LuminosityHighPassShader.js"></script>
-    <script src="https://cdn.staticfile.org/three.js/r128/examples/js/postprocessing/UnrealBloomPass.js"></script>
-
-    <!-- Bmob SDK -->
+    <!-- 1. 只引入两个最核心的文件 (360 Baomitu 源) -->
+    <script src="https://lib.baomitu.com/three.js/r128/three.min.js"></script>
+    <script src="https://lib.baomitu.com/three.js/r128/examples/js/controls/OrbitControls.js"></script>
+    
+    <!-- 2. Bmob 云端数据库 -->
     <script src="https://code.bdstatic.com/npm/bmob.js-sdk-v4@2.5.10/dist/Bmob-2.5.10.min.js"></script>
 
-    <!-- AI 手势 (加载失败不影响主程序) -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
-
     <style>
-        body { margin: 0; overflow: hidden; background-color: #050505; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        
+        /* 加载层样式 */
         #loader {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 99;
             display: flex; flex-direction: column; justify-content: center; align-items: center; color: white;
-            transition: opacity 0.5s;
         }
-        .btn-group { position:absolute; top:20px; left:50%; transform:translate(-50%); z-index:10; display: flex; gap:10px; }
-        .btn { padding: 8px 16px; border-radius: 20px; border:none; cursor:pointer; background:rgba(255,255,255,0.2); color:white; backdrop-filter:blur(5px); }
-        .btn-up { background: linear-gradient(135deg, #ff0055, #ff5588); }
-        #status { position:absolute; bottom:20px; left:20px; color:#00ff88; font-size:12px; pointer-events:none; }
+        
+        /* 按钮样式 */
+        .btn-group { position:absolute; top:20px; left:50%; transform:translate(-50%); z-index:10; display: flex; gap:15px; }
+        .btn { 
+            padding: 10px 20px; border-radius: 25px; border:1px solid rgba(255,255,255,0.3); 
+            cursor:pointer; background:rgba(0,0,0,0.5); color:white; font-size: 14px;
+        }
+        .btn-up { background: #ff0055; border:none; box-shadow: 0 0 10px #ff0055; }
+        
+        /* 错误提示 */
+        #debug { position:absolute; bottom:10px; left:10px; color:gray; font-size:10px; pointer-events:none; }
     </style>
 </head>
 <body>
 
     <div id="loader">
-        <div style="font-size: 30px;">🎄</div>
-        <div id="loader-text" style="margin-top:15px; color:#aaa;">正在连接魔法云端...</div>
-        <div id="error-msg" style="margin-top:10px; color:#ff4444; font-size:12px; max-width:80%; text-align:center;"></div>
+        <div style="font-size: 40px;">🎄</div>
+        <div id="loader-text" style="margin-top:15px; color:#aaa;">正在连接...</div>
     </div>
 
     <div class="btn-group">
-        <label class="btn btn-up">📷 传照片 <input type="file" hidden multiple id="file-input" accept="image/*"></label>
+        <label class="btn btn-up">
+            📷 传照片 
+            <input type="file" hidden multiple id="file-input" accept="image/*">
+        </label>
         <button class="btn" onclick="clearMemories()">🗑️ 清空</button>
     </div>
-    <div id="status">等待就绪...</div>
+
+    <div id="debug">System Ready</div>
 
     <script>
         // ============================================
-        // 全局错误捕获 (帮你找出问题)
+        // ⚠️ 第一步：在这里填入你的 Key (不要删引号)
         // ============================================
-        window.onerror = function(msg, url, line) {
-            const errorText = `出错啦: ${msg} (第${line}行)`;
-            document.getElementById('error-msg').innerText = errorText;
-            document.getElementById('loader-text').innerText = "加载失败，请截图发给作者";
-            // 3秒后强制进入，保证能玩
-            setTimeout(() => { document.getElementById('loader').style.display = 'none'; }, 3000);
-        };
-
-        // ============================================
-        // 1. 重点检查区域：请填入你的 Bmob Key
-        // ============================================
-        // 注意：不要删掉双引号！不要有多余空格！
         const SECRET_KEY = "c9f545074cd83b7b"; 
         const API_KEY = "1343356157845614";
 
         // ============================================
-        // 2. 初始化逻辑
+        // 程序逻辑
         // ============================================
+        let scene, camera, renderer, controls, photoGroup, treeSystem;
         let isOffline = false;
         
-        // 5秒强制超时机制：如果网太卡，直接进入
-        setTimeout(() => {
-            const loader = document.getElementById('loader');
-            if(loader && loader.style.display !== 'none') {
-                console.warn("加载超时，强制进入");
-                loader.style.display = 'none';
-            }
-        }, 8000);
-
+        // 1. 初始化数据库
         try {
-            if (typeof Bmob === 'undefined') {
-                throw new Error("Bmob SDK 加载失败，请检查网络");
-            }
             if (SECRET_KEY.includes("c9f545074cd83b7b")) {
                 isOffline = true;
-                console.log("未填 Key，进入离线模式");
+                console.log("进入离线模式");
             } else {
                 Bmob.initialize(SECRET_KEY, API_KEY);
             }
         } catch(e) {
-            console.error(e);
-            document.getElementById('error-msg').innerText = "云端连接失败: " + e.message;
-            isOffline = true; // 降级为离线模式
+            isOffline = true;
+            document.getElementById('debug').innerText = "云端连接失败，已转离线";
         }
 
-        // ============================================
-        // 3. Three.js 场景
-        // ============================================
-        let scene, camera, renderer, composer, controls, photoGroup, treeSystem;
-        let time = 0;
-        
+        // 2. 初始化场景
         function init() {
+            // 防止 Three.js 没加载出来
             if (typeof THREE === 'undefined') {
-                alert("Three.js 核心库未加载！请刷新页面重试");
+                document.getElementById('loader-text').innerText = "核心库加载失败，请刷新";
                 return;
             }
 
             scene = new THREE.Scene();
-            scene.fog = new THREE.FogExp2(0x050505, 0.02);
-            
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 500);
-            camera.position.set(0, 5, 50);
+            scene.fog = new THREE.FogExp2(0x000000, 0.02); // 黑色雾气
 
-            renderer = new THREE.WebGLRenderer({ antialias: window.innerWidth > 800 });
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 500);
+            camera.position.set(0, 5, 40);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             document.body.appendChild(renderer.domElement);
 
-            // 尝试开启辉光，如果设备不支持则忽略
-            try {
-                composer = new THREE.EffectComposer(renderer);
-                composer.addPass(new THREE.RenderPass(scene, camera));
-                const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-                bloom.threshold = 0; bloom.strength = 1.2; bloom.radius = 0.5;
-                composer.addPass(bloom);
-            } catch(e) {
-                console.warn("辉光效果开启失败，已自动关闭");
-                composer = null; // 降级渲染
+            // 修复：如果 OrbitControls 加载失败，手动兼容，不报错
+            if (THREE.OrbitControls) {
+                controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.autoRotate = true;
+                controls.autoRotateSpeed = 2.0;
+            } else {
+                document.getElementById('debug').innerText = "触摸控制加载失败，启用自动旋转";
             }
 
-            controls = new THREE.OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true;
-            controls.autoRotate = true;
-
+            // 创建圣诞树粒子
             createTree();
+            
+            // 创建照片组
             photoGroup = new THREE.Group();
             scene.add(photoGroup);
 
+            // 窗口自适应
             window.addEventListener('resize', () => {
                 camera.aspect = window.innerWidth / window.innerHeight;
                 camera.updateProjectionMatrix();
                 renderer.setSize(window.innerWidth, window.innerHeight);
-                if(composer) composer.setSize(window.innerWidth, window.innerHeight);
             });
 
+            // 开始动画
             animate();
-            fetchMemories(); // 开始拉取照片
+            
+            // 拉取照片
+            fetchMemories();
         }
 
         function createTree() {
-            const geo = new THREE.BufferGeometry();
-            const count = 2000;
-            const pos = [], cols = [];
+            const geometry = new THREE.BufferGeometry();
+            const count = 1500;
+            const positions = [];
+            const colors = [];
+            
             for(let i=0; i<count; i++) {
                 const p = i/count;
-                const r = 15 * (1-p);
                 const angle = i * 0.15;
-                pos.push(Math.cos(angle)*r, p*40-20, Math.sin(angle)*r);
-                const c = new THREE.Color().setHSL(Math.random()*0.3+0.3, 1.0, 0.5);
-                cols.push(c.r, c.g, c.b);
+                const r = 15 * (1 - p);
+                const x = Math.cos(angle)*r;
+                const y = p*40 - 20;
+                const z = Math.sin(angle)*r;
+                
+                positions.push(x, y, z);
+                
+                // 颜色生成：绿色为主，点缀彩色
+                const color = new THREE.Color();
+                if(Math.random() > 0.8) color.setHSL(Math.random(), 1.0, 0.6); // 彩球
+                else color.setHSL(0.3 + Math.random()*0.1, 0.8, 0.4); // 绿叶
+                
+                colors.push(color.r, color.g, color.b);
             }
-            geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-            geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
-            const mat = new THREE.PointsMaterial({ size: 0.6, vertexColors: true, blending: THREE.AdditiveBlending });
-            treeSystem = new THREE.Points(geo, mat);
+
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+            
+            // 创建发光材质点
+            const texture = createPointTexture();
+            const material = new THREE.PointsMaterial({ 
+                size: 0.8, 
+                map: texture, 
+                vertexColors: true, 
+                blending: THREE.AdditiveBlending, 
+                depthWrite: false,
+                transparent: true
+            });
+            
+            treeSystem = new THREE.Points(geometry, material);
             scene.add(treeSystem);
+        }
+
+        // 手画一个圆形发光贴图（不用外部图片，防卡顿）
+        function createPointTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(16,16,0,16,16,16);
+            grad.addColorStop(0, 'rgba(255,255,255,1)');
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0,0,32,32);
+            return new THREE.CanvasTexture(canvas);
         }
 
         function animate() {
             requestAnimationFrame(animate);
-            time += 0.01;
-            controls.update();
-            if(treeSystem) {
-                treeSystem.rotation.y = time * 0.1;
-                treeSystem.scale.setScalar(1 + Math.sin(time)*0.05);
+            
+            if(controls) controls.update();
+            else if(camera) {
+                // 如果控制器坏了，手动旋转相机
+                const timer = Date.now() * 0.0005;
+                camera.position.x = Math.cos(timer) * 40;
+                camera.position.z = Math.sin(timer) * 40;
+                camera.lookAt(0, 5, 0);
             }
-            if(composer) composer.render();
-            else renderer.render(scene, camera);
+
+            if(treeSystem) {
+                const time = Date.now() * 0.001;
+                treeSystem.rotation.y = time * 0.1;
+            }
+
+            renderer.render(scene, camera);
         }
 
         // ============================================
-        // 4. 数据交互
+        // 数据处理
         // ============================================
         async function fetchMemories() {
-            document.getElementById('loader-text').innerText = "正在同步云端照片...";
-            
+            document.getElementById('loader-text').innerText = "正在同步...";
             try {
                 let list = [];
                 if(isOffline) {
-                    list = JSON.parse(localStorage.getItem('local_memories') || '[]');
+                    list = JSON.parse(localStorage.getItem('xmas_memories') || '[]');
                 } else {
                     const query = Bmob.Query("Memories");
                     query.order("-createdAt");
-                    query.limit(50);
+                    query.limit(30);
                     list = await query.find();
                 }
-                
-                // 渲染照片
-                photoGroup.clear();
+
+                // 清空旧照片
+                while(photoGroup.children.length > 0){ 
+                    photoGroup.remove(photoGroup.children[0]); 
+                }
+
+                // 渲染新照片
                 list.forEach((item, i) => {
-                    const src = item.imageData || item.url; // 兼容不同字段
+                    const src = item.imageData || item.url; 
                     if(!src) return;
+                    
                     const img = new Image();
                     img.src = src;
                     img.onload = () => {
-                        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.Texture(img)}));
+                        const aspect = img.width / img.height;
+                        const spriteMat = new THREE.SpriteMaterial({ map: new THREE.Texture(img) });
+                        const sprite = new THREE.Sprite(spriteMat);
+                        
+                        // 螺旋排列
                         const angle = i * 1.5;
-                        const r = 10 + i*0.5;
-                        sprite.position.set(Math.cos(angle)*r, 30-i*1.2, Math.sin(angle)*r);
-                        sprite.scale.set(5,5,1);
+                        const y = 25 - i * 1.5; 
+                        const r = 12 + i * 0.5;
+                        
+                        sprite.position.set(Math.cos(angle)*r, y, Math.sin(angle)*r);
+                        sprite.scale.set(4 * aspect, 4, 1);
                         photoGroup.add(sprite);
                     }
                 });
                 
-                // 成功！隐藏加载层
                 document.getElementById('loader').style.display = 'none';
 
             } catch(e) {
                 console.error(e);
-                document.getElementById('error-msg').innerText = "数据获取失败: " + e.message;
-                // 即使失败，3秒后也进入场景
-                setTimeout(() => { document.getElementById('loader').style.display = 'none'; }, 2000);
+                document.getElementById('loader-text').innerText = "加载失败，进入演示";
+                setTimeout(() => document.getElementById('loader').style.display = 'none', 1000);
             }
         }
 
-        // 压缩与上传
+        // 上传与压缩
         document.getElementById('file-input').addEventListener('change', async (e) => {
             if(!e.target.files.length) return;
-            const status = document.getElementById('status');
-            status.innerText = "正在处理图片...";
+            const debug = document.getElementById('debug');
+            debug.innerText = "处理中...";
             
             for(let file of e.target.files) {
                 try {
-                    // 压缩
-                    const base64 = await new Promise(resolve => {
-                        const r = new FileReader(); r.readAsDataURL(file);
-                        r.onload = ev => {
-                            const img = new Image(); img.src = ev.target.result;
-                            img.onload = () => {
-                                const cvs = document.createElement('canvas');
-                                const max = 600;
-                                let w=img.width, h=img.height;
-                                if(Math.max(w,h)>max) { const s=max/Math.max(w,h); w*=s; h*=s; }
-                                cvs.width=w; cvs.height=h;
-                                cvs.getContext('2d').drawImage(img,0,0,w,h);
-                                resolve(cvs.toDataURL('image/jpeg', 0.7));
-                            }
-                        }
-                    });
-
+                    // 压缩图片
+                    const base64 = await compress(file);
+                    
                     // 上传
-                    status.innerText = "正在上传...";
+                    debug.innerText = "上传中...";
                     if(isOffline) {
-                        const list = JSON.parse(localStorage.getItem('local_memories')||'[]');
+                        const list = JSON.parse(localStorage.getItem('xmas_memories')||'[]');
                         list.unshift({imageData: base64});
-                        localStorage.setItem('local_memories', JSON.stringify(list));
+                        localStorage.setItem('xmas_memories', JSON.stringify(list));
                     } else {
-                        const q = Bmob.Query('Memories');
-                        q.set('imageData', base64);
-                        await q.save();
+                        const query = Bmob.Query('Memories');
+                        query.set('imageData', base64);
+                        await query.save();
                     }
-                } catch(err) { alert("上传失败:"+err.message); }
+                } catch(err) { alert("上传失败"); }
             }
-            status.innerText = "上传完成!";
+            debug.innerText = "完成";
             fetchMemories();
         });
 
+        function compress(file) {
+            return new Promise(resolve => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.src = e.target.result;
+                    img.onload = () => {
+                        const cvs = document.createElement('canvas');
+                        let w = img.width, h = img.height;
+                        const max = 500;
+                        if(w > max || h > max) {
+                            const ratio = Math.max(w,h) / max;
+                            w /= ratio; h /= ratio;
+                        }
+                        cvs.width = w; cvs.height = h;
+                        cvs.getContext('2d').drawImage(img, 0, 0, w, h);
+                        resolve(cvs.toDataURL('image/jpeg', 0.6));
+                    }
+                }
+            });
+        }
+
         window.clearMemories = () => {
-            if(confirm("确定清空吗？")) {
-                if(isOffline) { localStorage.removeItem('local_memories'); fetchMemories(); }
-                else alert("演示版为了数据安全，暂不支持云端清空，请去后台操作");
+            if(!confirm("清空重置？")) return;
+            if(isOffline) {
+                localStorage.removeItem('xmas_memories');
+                fetchMemories();
+            } else {
+                alert("在线模式请去后台清空，以免误删");
             }
         }
 
