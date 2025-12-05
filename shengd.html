@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>云端魔法圣诞树 (ac圣诞快乐)</title>
+    
+    <!-- 1. 国内 CDN 加速 -->
+    <script src="https://lib.baomitu.com/three.js/r128/three.min.js"></script>
+    <script src="https://lib.baomitu.com/three.js/r128/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://lib.baomitu.com/three.js/r128/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://lib.baomitu.com/three.js/r128/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://lib.baomitu.com/three.js/r128/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://lib.baomitu.com/three.js/r128/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://lib.baomitu.com/three.js/r128/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://lib.baomitu.com/three.js/r128/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+    <!-- 2. 引入 Bmob SDK (百度CDN源，国内极速) -->
+    <script src="https://code.bdstatic.com/npm/bmob.js-sdk-v4@2.5.10/dist/Bmob-2.5.10.min.js"></script>
+
+    <!-- AI 手势识别 -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: sans-serif; }
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 20px; box-sizing: border-box; z-index: 10;
+        }
+        .glass-panel {
+            background: rgba(20, 20, 35, 0.7); backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 16px; padding: 15px; color: white;
+            pointer-events: auto; text-align: center; margin: 0 auto;
+        }
+        h1 { margin: 0 0 5px 0; font-size: 1.2rem; color: #fff; text-shadow: 0 0 10px #00ff88; }
+        .btn-group { display: flex; gap: 10px; justify-content: center; margin-top: 10px; }
+        .btn { border: none; padding: 8px 16px; border-radius: 20px; font-size: 0.9rem; cursor: pointer; color: white; }
+        .btn-upload { background: linear-gradient(135deg, #ff0055, #ff5588); }
+        .btn-clear { background: rgba(255,255,255,0.2); border: 1px solid #777; }
+        #file-input { display: none; }
+        .status-bar {
+            position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.6); padding: 5px 15px; border-radius: 20px; font-size: 12px; color: #00ff88;
+        }
+        .camera-box {
+            position: absolute; bottom: 20px; right: 20px; width: 80px; height: 60px;
+            border-radius: 8px; overflow: hidden; border: 2px solid rgba(255,255,255,0.2); background: #000; pointer-events: auto;
+        }
+        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        #loader {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 99;
+            display: flex; flex-direction: column; justify-content: center; align-items: center; color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loader">
+        <div style="font-size: 24px;">🎄</div>
+        <div id="loader-text" style="margin-top:10px;">连接国内云端中...</div>
+    </div>
+
+    <div id="ui-layer">
+        <div class="glass-panel">
+            <h1>✨ 魔法圣诞树 (Bmob版)</h1>
+            <p style="font-size:12px; color:#ccc;">照片实时云同步 • 支持手势控制</p>
+            <div class="btn-group">
+                <label class="btn btn-upload">
+                    📷 传照片
+                    <input type="file" id="file-input" accept="image/*" multiple>
+                </label>
+                <button class="btn btn-clear" onclick="clearMemories()">🗑️ 清空</button>
+            </div>
+        </div>
+        <div class="status-bar" id="status-text">初始化中...</div>
+        <div class="camera-box" onclick="initHandPose()">
+            <video id="input-video" playsinline muted autoplay></video>
+            <div style="position:absolute; top:0; left:0; width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-size:10px; color:white; pointer-events:none;" id="cam-tip">点击开启<br>摄像头</div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. 配置 Bmob (请去 bmob.cn 获取)
+        // ==========================================
+        const SECRET_KEY = "c9f545074cd83b7b"; 
+        const API_KEY = "1343356157845614";
+        
+        let isOfflineMode = false;
+
+        // 初始化 Bmob
+        if (SECRET_KEY.includes("c9f545074cd83b7b")) {
+            isOfflineMode = true;
+            console.warn("未填入Key，使用离线模式");
+        } else {
+            try {
+                Bmob.initialize(SECRET_KEY, API_KEY);
+            } catch(e) { console.error("Bmob Init Error", e); }
+        }
+
+        // ==========================================
+        // 2. 图片压缩 (必须保留，防止卡顿)
+        // ==========================================
+        function compressImage(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.src = e.target.result;
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        const maxSide = 600; 
+                        let w = img.width, h = img.height;
+                        if (Math.max(w, h) > maxSide) {
+                            const s = maxSide / Math.max(w, h);
+                            w *= s; h *= s;
+                        }
+                        canvas.width = w; canvas.height = h;
+                        ctx.drawImage(img, 0, 0, w, h);
+                        resolve(canvas.toDataURL('image/jpeg', 0.7)); 
+                    };
+                };
+            });
+        }
+
+        // ==========================================
+        // 3. 上传与下载逻辑 (Bmob版)
+        // ==========================================
+        document.getElementById('file-input').addEventListener('change', async (e) => {
+            const files = e.target.files;
+            if (!files.length) return;
+            
+            const loader = document.getElementById('loader');
+            loader.style.display = 'flex';
+            document.getElementById('loader-text').innerText = "正在压缩并上传...";
+
+            for (let file of files) {
+                try {
+                    const base64 = await compressImage(file);
+                    
+                    if(isOfflineMode) {
+                        // 离线逻辑
+                        const mems = JSON.parse(localStorage.getItem('local_memories') || '[]');
+                        mems.push({ imageData: base64 });
+                        localStorage.setItem('local_memories', JSON.stringify(mems));
+                    } else {
+                        // Bmob 上传逻辑
+                        const query = Bmob.Query('Memories');
+                        query.set("imageData", base64);
+                        await query.save();
+                    }
+                } catch (err) {
+                    alert("上传出错: " + err.message);
+                }
+            }
+            loader.style.display = 'none';
+            fetchMemories(); // 刷新
+        });
+
+        async function fetchMemories() {
+            if(isOfflineMode) {
+                const mems = JSON.parse(localStorage.getItem('local_memories') || '[]');
+                renderPhotos(mems);
+                document.getElementById('loader').style.display = 'none';
+                return;
+            }
+
+            try {
+                // Bmob 查询逻辑
+                const query = Bmob.Query("Memories");
+                query.order("-createdAt"); // 按创建时间倒序
+                query.limit(50);
+                const results = await query.find();
+                // Bmob 返回的数据直接是对象数组，不需要 .get()
+                renderPhotos(results); 
+                document.getElementById('loader').style.display = 'none';
+            } catch(e) {
+                console.error(e);
+                document.getElementById('loader-text').innerText = "连接失败，请检查Key";
+            }
+        }
+
+        window.clearMemories = async () => {
+            if(!confirm("确定清空吗？")) return;
+            if(isOfflineMode) {
+                localStorage.removeItem('local_memories');
+                renderPhotos([]);
+            } else {
+                alert("演示保护：请去 Bmob 后台手动删除数据表 'Memories'");
+            }
+        };
+
+        // ==========================================
+        // 4. Three.js 场景渲染 (通用)
+        // ==========================================
+        let scene, camera, renderer, composer, controls, photoGroup, treeSystem;
+        let time = 0;
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry/i.test(navigator.userAgent);
+
+        function initScene() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x050505, 0.02);
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 500);
+            camera.position.set(0, 5, 50);
+
+            renderer = new THREE.WebGLRenderer({ antialias: !isMobile });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(isMobile ? 1.0 : Math.min(window.devicePixelRatio, 1.5));
+            document.body.appendChild(renderer.domElement);
+
+            // 后处理
+            composer = new THREE.EffectComposer(renderer);
+            composer.addPass(new THREE.RenderPass(scene, camera));
+            if (!isMobile) {
+                const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+                bloom.threshold = 0; bloom.strength = 1.2; bloom.radius = 0.5;
+                composer.addPass(bloom);
+            }
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.autoRotate = true;
+
+            createTree();
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                composer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        function createTree() {
+            const geo = new THREE.BufferGeometry();
+            const count = isMobile ? 1500 : 3000;
+            const pos = [], cols = [];
+            for(let i=0; i<count; i++) {
+                const p = i/count;
+                const r = 15 * (1-p);
+                const angle = i * 0.1;
+                pos.push(Math.cos(angle)*r, p*40-20, Math.sin(angle)*r);
+                const c = new THREE.Color().setHSL(Math.random()*0.3+0.3, 1.0, 0.5);
+                cols.push(c.r, c.g, c.b);
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+            geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+            treeSystem = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.8, vertexColors: true, blending: THREE.AdditiveBlending }));
+            scene.add(treeSystem);
+        }
+
+        function renderPhotos(dataList) {
+            if(!photoGroup) { photoGroup = new THREE.Group(); scene.add(photoGroup); }
+            while(photoGroup.children.length > 0) photoGroup.remove(photoGroup.children[0]);
+
+            dataList.forEach((item, index) => {
+                // Bmob 返回字段直接访问 item.imageData
+                if(!item.imageData) return; 
+                const img = new Image();
+                img.src = item.imageData;
+                img.onload = () => {
+                    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.Texture(img) }));
+                    sprite.material.map.needsUpdate = true;
+                    const angle = index * 1.5;
+                    const y = 30 - index * 1.2; 
+                    const r = 10 + index * 0.5;
+                    sprite.position.set(Math.cos(angle)*r, y, Math.sin(angle)*r);
+                    sprite.scale.set(5, 5, 1);
+                    photoGroup.add(sprite);
+                };
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            time += 0.01;
+            controls.update();
+            if(treeSystem) {
+                treeSystem.rotation.y = time * 0.1;
+                const s = 1 + Math.sin(time) * 0.05;
+                treeSystem.scale.set(s,s,s);
+            }
+            composer.render();
+            if(window.detectHands) window.detectHands();
+        }
+
+        // ==========================================
+        // 5. 手势识别 (简化版)
+        // ==========================================
+        let handDetector;
+        async function initHandPose() {
+            document.getElementById('cam-tip').style.display = 'none';
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 320, height: 240 } });
+                document.getElementById('input-video').srcObject = stream;
+                
+                document.getElementById('status-text').innerText = "加载AI模型...";
+                const model = handPoseDetection.SupportedModels.MediaPipeHands;
+                handDetector = await handPoseDetection.createDetector(model, { runtime: 'mediapipe', solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands' });
+                document.getElementById('status-text').innerText = "AI就绪! 握拳加速";
+                
+                window.detectHands = async () => {
+                    const video = document.getElementById('input-video');
+                    if(video.readyState < 2) return;
+                    try {
+                        const hands = await handDetector.estimateHands(video);
+                        if(hands.length > 0) {
+                            controls.autoRotateSpeed = 8.0;
+                            document.getElementById('status-text').innerText = "🚀 魔法加速中!";
+                        } else {
+                            controls.autoRotateSpeed = 1.0;
+                            document.getElementById('status-text').innerText = "等待手势...";
+                        }
+                    } catch(e) {}
+                };
+            } catch(e) { alert("摄像头启动失败"); }
+        }
+
+        // 启动
+        initScene();
+        fetchMemories();
+    </script>
+</body>
+</html>
